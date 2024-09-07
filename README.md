@@ -26,8 +26,7 @@ The overall classifier modeling process workflow is shown in Figure 1.
   <img alt="HUG-IML Process Workflow" src="HUG-IML Process Workflow.png" width="780" height="540"/>
   <figcaption><strong>Figure 1.</strong> HUG-IML Process Workflow</figcaption>
 </figure>
-
-
+<br/>
 The specific details of program/data files and directories contained in this repository are as follows:
 
 #### 1.1 Benchmark datasets
