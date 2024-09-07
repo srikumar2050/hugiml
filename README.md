@@ -146,17 +146,19 @@ You may use one of the following options for executing the HUG-IML classifier mo
    e.g. pip install -r requirements.txt
 2. THUIsl.jar shared in the repository is prepared by compiling java files using Java(TM) SE Runtime Environment (build 22.0.1+8-16). If your JDK/JRE is incompatible with this version, then you may have to compile the java files (refer to THUIsl_src directory for the java files). Compile the java program and create jar file using the following steps:
    a. javac *.java
+   
    b. jar cvfm THUIsl.jar META-INF/MANIFEST.MF *.class
-3. Open the HUGIML Classifier Sample Notebook.ipynb and run the HUGIML classifier.
+4. Open the HUGIML Classifier Sample Notebook.ipynb and run the HUGIML classifier.
 
 <em>Option III: Manual compilation and configuration</em>
 
 1. Use pythonVirtualEnvironmentSetup.txt to setup a virtual environment in python and install necessary dependencies. This can help avoid any package level conflicts you may encounter in your base python environment.
 2. Use the java files in THUIsl_src folder, compile them and create a THUIsl.jar file. You may use the following steps for compiling and creating a jar file.
    a. javac *.java
+   
    b. jar cvfm THUIsl.jar META-INF/MANIFEST.MF *.class
-3. Place the compiled .jar file in the location where the relevant python files are stored (HUGIML Classifier Sample Notebook.ipynb, HUGIMLClassifier.py, and utils.py)
-4. Open the HUGIML Classifier Sample Notebook.ipynb notebook and run the HUGIML classifier.
+4. Place the compiled .jar file in the location where the relevant python files are stored (HUGIML Classifier Sample Notebook.ipynb, HUGIMLClassifier.py, and utils.py)
+5. Open the HUGIML Classifier Sample Notebook.ipynb notebook and run the HUGIML classifier.
 
 <br/>
 
