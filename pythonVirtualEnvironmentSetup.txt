@@ -1,0 +1,33 @@
+#0. Install anaconda or python version 3.9.18 and use the following steps to create a virtual environment 
+
+#1. Open anaconda command prompt using Start -> Anaconda prompt
+
+#2. create a new virtual environment
+conda create -n hugimlpy39 python=3.9.18
+
+#3. activate the new environment
+conda activate hugimlpy39
+
+#4. install jupyter
+conda install jupyter
+
+#5. install the necessary packages using the requirements.txt file (assumes python version 3.9.18)
+pip install -r requirements.txt
+
+#6. exit the environment
+conda deactivate
+
+#7. setup kernels 
+conda install -n base nb_conda_kernels
+
+#8. start jupyternotebook using start -> jupyter notebook, 
+#default environment will be (base); change kernel to the newly created one i.e. hugimlpy39
+
+#9. Open the HUGIML Classifier Sample Notebook.ipynb to run the classifier models. Refer to the README.txt file for additional instructions on the use of HUGIML classifier.
+
+
+
+
+
+
+
