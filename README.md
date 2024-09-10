@@ -82,7 +82,7 @@ Top-K High Utility Itemset (THUI) is a Top-K high utility pattern mining algorit
 
 #### 1.4 Application containers
 
-Dockerfile: This file includes necessary steps for installing the relevant python and java libraries. Refer to the Usage Information (Option I) below for the actual deployment steps.
+Dockerfile: This file includes necessary steps for installing the relevant python and java libraries. Refer to the Usage Information (Option II) below for the actual deployment steps.
 
 #### 1.5 Data related files
 
@@ -127,7 +127,11 @@ GNU GPLv3 License: This repository contains a free software program. You can red
 
 You may use one of the following options for executing the HUG-IML classifier modeling programs shared in this repository.
 
-<em>Option I: Application containers</em>
+<em>Option I: Run without any installation or configuration directly in Code ocean</em>
+1. Use the URL: https://codeocean.com/capsule/c9a24104-ce5a-4022-9a62-4494ad43c53b/tree
+2. Run the python notebook file (HUGIML Classifier Sample Notebook.ipynb) 
+
+<em>Option II: Application containers</em>
 
 1. Open the Docker Desktop Application on your machine
 2. Open the Dockerfile shared in Visual Studio (or other related IDEs)
@@ -136,7 +140,7 @@ You may use one of the following options for executing the HUG-IML classifier mo
 5. The application runs on http://localhost:3333/lab
 6. Open the HUGIML Classifier Sample Notebook.ipynb file to run the HUG-IML classifier, perform hyper-parameter tuning, and evaluate classifier modeling performance.
 
-<em>Option II: Basic python and java setup</em>
+<em>Option III: Basic python and java setup</em>
 
 1. Install the dependent python libraries provided in the requirements.txt file.
    e.g. pip install -r requirements.txt
@@ -147,7 +151,7 @@ You may use one of the following options for executing the HUG-IML classifier mo
    b. jar cvfm THUIsl.jar META-INF/MANIFEST.MF *.class
 3. Open the HUGIML Classifier Sample Notebook.ipynb and run the HUGIML classifier.
 
-<em>Option III: Manual compilation and configuration</em>
+<em>Option IV: Manual compilation and configuration</em>
 
 1. Use pythonVirtualEnvironmentSetup.txt to setup a virtual environment in python and install necessary dependencies. This can help avoid any package level conflicts you may encounter in your base python environment.
 2. Use the java files in THUIsl_src folder, compile them and create a THUIsl.jar file. You may use the following steps for compiling and creating a jar file.
@@ -167,7 +171,8 @@ The key modeling steps are provided below for illustration. You may refer to the
 ```
 #import necessary files
 from utils import DataUtils, MetricUtils, PlotUtils
-from HUGIMLClassifier import HUGIMLClassifier from sklearn.model_selection import train_test_split
+from HUGIMLClassifier import HUGIMLClassifier
+from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
 ```
