@@ -128,7 +128,7 @@ GNU GPLv3 License: This repository contains a free software program. You can red
 You may use one of the following options for executing the HUG-IML classifier modeling programs shared in this repository.
 
 <em>Option I: Run without any installation or configuration directly in Code ocean</em>
-1. Use the URL: https://codeocean.com/capsule/c9a24104-ce5a-4022-9a62-4494ad43c53b/tree
+1. Use the URL: https://doi.org/10.24433/CO.0007155.v1
 2. Run the python notebook file (HUGIML Classifier Sample Notebook.ipynb) 
 
 <em>Option II: Application containers</em>
