@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Arrays;
+import java.util.Comparator;
 
 public class LabelBinarizer {
     Map<String, Integer> labelToIdx = new HashMap<String, Integer>();
