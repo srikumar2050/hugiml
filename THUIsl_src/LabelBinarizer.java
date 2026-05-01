@@ -45,9 +45,20 @@ public class LabelBinarizer {
     }
 
 	public String[] getLabels(String colName){
-		List<String> labels = new ArrayList<String>(labelToIdx.keySet());
-		String[] res = new String [labels.size()];
-		for (int i=0;i<labels.size();i++) res[i] = colName + "=" +labels.get(i);
+		List<Map.Entry<String, Integer>> entries =
+        new ArrayList<>(labelToIdx.entrySet());
+		
+		//sorting ensures that labels are correctly ordered for inverse transform
+		entries.sort(Comparator.comparingInt(Map.Entry::getValue));
+		String[] res = new String[entries.size()];
+		//System.out.print(colName + " ");
+		for (int i = 0; i < entries.size(); i++) {
+			String label = entries.get(i).getKey();
+			Integer index = entries.get(i).getValue();
+			//System.out.print(i + " " + label + " " + index + "; ");
+			res[i] = colName + "=" + label;
+		}
+		//System.out.println();
 		return res;
 	}
 }
