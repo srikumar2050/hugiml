@@ -307,3 +307,97 @@ display(out)</code></pre>
 hyper-parameter tuning (grid search or optuna), performance evaluation,
 and visualization refer to the shared jupyter notebook file: HUGIML
 Classifier Sample Notebook.ipynb.</p>
+
+<p><br/></p>
+<h3>4. PURE-PYTHON BACKEND (HUGIMLClassifierPy)</h3>
+
+<p><code>HUGIMLClassifierPy</code> is a pure-Python re-implementation of the HUG-IML classifier that requires no Java runtime and no intermediate disk files. The public API is compatible with <code>HUGIMLClassifier</code>.</p>
+
+<h4>Installation</h4>
+
+<p>Install the required Python packages (no Java needed):</p>
+
+<pre><code>pip install numpy pandas scipy scikit-learn</code></pre>
+
+<h4>Command-line usage</h4>
+
+<p>Run the sample script directly from the repository root:</p>
+
+<pre><code>python HUGIMLClassifierSample.py</code></pre>
+
+<p>Or use the provided sample notebook for an interactive walkthrough:</p>
+
+<pre><code>jupyter notebook "HUGIML Classifier Sample Notebook (Pure Python).ipynb"</code></pre>
+
+<h4>Parameters</h4>
+
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>B</code></td><td>int</td><td><code>5</code></td><td>Quantile bins per numerical column. Use <code>-1</code> for supervised auto-selection (maximises per-column information gain over [2, 20]).</td></tr>
+<tr><td><code>L</code></td><td>int</td><td><code>1</code></td><td>Maximum pattern length. <code>1</code> = singletons; <code>2</code> = singletons and pairs.</td></tr>
+<tr><td><code>G</code></td><td>float</td><td><code>1e-4</code></td><td>Minimum information-gain threshold. Patterns below this are discarded.</td></tr>
+<tr><td><code>topK</code></td><td>int</td><td><code>-1</code></td><td>Maximum patterns to retain. <code>-1</code> auto-computes as C(100, L).</td></tr>
+<tr><td><code>allCols</code></td><td>list</td><td><code>None</code></td><td><code>[int_cols, float_cols, cat_cols]</code> — column names grouped by type. Pair with <code>origColumns</code>.</td></tr>
+<tr><td><code>origColumns</code></td><td>list</td><td><code>None</code></td><td>Ordered list of all column names matching the columns of X. Pair with <code>allCols</code>.</td></tr>
+<tr><td><code>base_estimator</code></td><td>estimator</td><td><code>None</code></td><td>Downstream sklearn classifier. Defaults to <code>LogisticRegression</code>.</td></tr>
+<tr><td><code>verbose</code></td><td>bool</td><td><code>False</code></td><td>Print progress during fit.</td></tr>
+</tbody>
+</table>
+
+<h4>Quick start</h4>
+
+<pre><code>from HUGIMLClassifierPy import HUGIMLClassifierPy
+from sklearn.model_selection import train_test_split
+import numpy as np, pandas as pd
+
+# Load data
+data = pd.read_csv('datasets/pima indians diabetes.csv', header=None)
+data.columns = ['numPregnancies','glucose','bp','skinThickness',
+                'insulin','bmi','diabetesPedigreeFunction','age','class']
+X, y = data.iloc[:,:-1], data.iloc[:,-1]
+
+# Identify column types
+numericIntCols   = [c for c in X.columns if np.issubdtype(X[c].dtype, np.integer)]
+numericFloatCols = [c for c in X.columns if np.issubdtype(X[c].dtype, float)]
+catCols          = [c for c in X.columns if np.issubdtype(X[c].dtype, object)]
+
+# Split
+x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2,
+                                                     random_state=0, stratify=y)
+
+# Fit
+clf = HUGIMLClassifierPy(B=-1, L=1, G=1e-6,
+                         allCols=[numericIntCols, numericFloatCols, catCols],
+                         origColumns=X.columns.tolist())
+clf.fit(x_train, y_train)
+
+# Predict
+y_pred = np.argmax(clf.predict_proba(x_test), axis=1)
+
+# Inspect patterns
+print(clf.get_hug_features())   # human-readable pattern labels
+print(clf.get_pattern_info())   # utility / information gain / support per pattern
+</code></pre>
+
+<h4>Additional methods (available only in HUGIMLClassifierPy)</h4>
+
+<table>
+<thead>
+<tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>transform(X)</code></td><td><code>csr_matrix (n, n_patterns)</code></td><td>Binary pattern-presence matrix without running prediction. Use to plug the pattern matrix into a custom downstream model.</td></tr>
+<tr><td><code>get_pattern_info()</code></td><td><code>pd.DataFrame</code></td><td>One row per mined pattern with columns <code>pattern</code>, <code>utility</code>, <code>information_gain</code>, and <code>support</code>.</td></tr>
+</tbody>
+</table>
+
+<h4>Notes</h4>
+
+<ul>
+<li><code>HUGIMLClassifierPy</code> does not create or use the <code>outputs/</code> directory.</li>
+<li>Parameters <code>dsName</code>, <code>foldNo</code>, <code>imbWeights</code>, <code>huiItemsPercent</code>, and <code>fsK</code> are available only in the Java-backed <code>HUGIMLClassifier</code> and have no equivalent here.</li>
+<li>For datasets with more than ~50000 training rows and <code>L &ge; 2</code>, the Java-backed <code>HUGIMLClassifier</code> is recommended for performance.</li>
+</ul>
