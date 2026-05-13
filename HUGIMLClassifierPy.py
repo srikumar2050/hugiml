@@ -129,27 +129,20 @@ def _entropy(y: np.ndarray, n_classes: int) -> float:
 
 
 def _ig_col(x_disc: np.ndarray, y: np.ndarray, n_classes: int) -> float:
-    """
-    Information gain of a discretised column with respect to class labels.
-
-    IG = H(y) - sum_v[ P(x=v) * H(y | x=v) ]
-    """
+    """Information gain of a discretised column with respect to class labels."""
     base  = _entropy(y, n_classes)
     total = len(y)
     ce    = 0.0
     for v in np.unique(x_disc):
         m   = x_disc == v
         ce += m.sum() / total * _entropy(y[m], n_classes)
-    return round(base - ce, 6)
+    return base - ce
 
 
 def _nmi_binary(x_bin: np.ndarray, y: np.ndarray, n_classes: int) -> float:
     """
     Normalised Mutual Information between a binarised (0/1) column and y.
-
-    Computed on a per-category indicator column (one-hot binarised), not on
-    the full multi-valued categorical column.  Returns a value in [0, 1];
-    returns 0.0 for constant columns.
+    Returns a value in [0, 1]; returns 0.0 for constant columns.
     """
     vals, x_counts = np.unique(x_bin, return_counts=True)
     if len(vals) <= 1:
@@ -170,19 +163,18 @@ def _nmi_binary(x_bin: np.ndarray, y: np.ndarray, n_classes: int) -> float:
             nxy = y_v[c]
             if nxy > 0:
                 mi += (nxy / n) * math.log((nxy / n) / ((nx_v / n) * (y_counts[c] / n)))
-    return round(max(0.0, min(1.0, mi / math.sqrt(hx * hy))), 6)
+    return float(max(0.0, min(1.0, mi / math.sqrt(hx * hy))))
 
 
 def _pearson(x: np.ndarray, y: np.ndarray) -> float:
     """
     Pearson correlation coefficient between x and y.
-
     Returns 0.0 when x has zero variance or the result is not finite.
     """
     if x.std() == 0:
         return 0.0
     r = float(np.corrcoef(x.astype(float), y.astype(float))[0, 1])
-    return 0.0 if not math.isfinite(r) else round(r, 6)
+    return 0.0 if not math.isfinite(r) else r
 
 
 def _kbins(col: np.ndarray, nb: int):
@@ -534,6 +526,9 @@ def _prepare_transactions(X: np.ndarray, y: np.ndarray,
         tu[k] = tu[k] / tu_y[yi] if tu_y[yi] > 0 else 0.0
 
     # ── Pass 3: build transaction list ───────────────────────────────────────
+    # colnew_set: O(1) membership test replacing the O(n) list check done
+    # n_rows * n_cols = up to 800*20 = 16000 times per fit.
+    colnew_set   = set(colnew)
     transactions = []
     item_twu     = [0.0] * ic
     RIU          = [0.0] * ic
@@ -552,7 +547,7 @@ def _prepare_transactions(X: np.ndarray, y: np.ndarray,
 
             bname = bkey(bi, j)
             txk   = (bname, yi)
-            if bname not in colnew or txk not in tu:
+            if bname not in colnew_set or txk not in tu:
                 continue
             iu  = round(tu[txk], 6)
             iid = bn2id[bname]
@@ -674,52 +669,84 @@ class _UL:
     the utility list is fully constructed.
     """
 
-    def __init__(self, item):
-        self.item = item
-        self.sI   = 0.0
-        self.sR   = 0.0
-        self.els  = []
-        self.ig   = 0.0
+    __slots__ = ('item', 'sI', 'sR', 'els', 'ig',
+                 '_tid_arr', '_iu_arr', '_ru_arr')
 
-    def add(self, el: _El):
-        """Append one transaction element and update the running utility sums."""
+    def __init__(self, item):
+        self.item     = item
+        self.sI       = 0.0
+        self.sR       = 0.0
+        self.els      = []
+        self.ig       = 0.0
+        self._tid_arr = None
+        self._iu_arr  = None
+        self._ru_arr  = None
+
+    def add(self, el: '_El'):
+        """Append one transaction element and update running utility sums."""
         self.sI += el.iu
         self.sR += el.ru
         self.els.append(el)
 
-    def compute_ig(self, parent, ytrain: list, n_cls: int):
+    def _seal(self):
+        """
+        Build parallel numpy arrays from the els list.
+        Called once after all add() calls are complete so _child() can use
+        vectorised operations instead of a Python element loop.
+        """
+        if self.els:
+            self._tid_arr = np.array([e.tid for e in self.els], dtype=np.int32)
+            self._iu_arr  = np.array([e.iu  for e in self.els], dtype=np.float64)
+            self._ru_arr  = np.array([e.ru  for e in self.els], dtype=np.float64)
+        else:
+            self._tid_arr = np.empty(0, dtype=np.int32)
+            self._iu_arr  = np.empty(0, dtype=np.float64)
+            self._ru_arr  = np.empty(0, dtype=np.float64)
+
+    def _seal_from_arrays(self, tid_arr, iu_arr, ru_arr):
+        """
+        Build the UL directly from numpy arrays (used by _child).
+        Reconstructs els list for compute_ig; sets sI and sR from array sums.
+        """
+        self._tid_arr = tid_arr
+        self._iu_arr  = iu_arr
+        self._ru_arr  = ru_arr
+        self.sI       = float(iu_arr.sum())
+        self.sR       = float(ru_arr.sum())
+        self.els      = [_El(int(tid_arr[k]), float(iu_arr[k]), float(ru_arr[k]))
+                         for k in range(len(tid_arr))]
+
+    def compute_ig(self, parent, y_arr: np.ndarray, n_cls: int):
         """
         Compute the information gain of this itemset relative to its parent.
 
-        IG measures how much discriminative power this pattern adds over its
-        parent pattern (or over the full dataset for depth-1 patterns).
-        The result is stored in self.ig.
-
         Parameters
         ----------
-        parent  : _UL or None.  The parent itemset's utility list, or None for
-                  the root level.
-        ytrain  : list of int.  Class labels for all training transactions.
-        n_cls   : int.  Number of distinct classes.
+        parent  : _UL or None.  The parent itemset's utility list, or None
+                  for root-level (depth-1) patterns.
+        y_arr   : np.ndarray of int — class labels for all training transactions,
+                  pre-converted by the caller to avoid repeated np.array() calls.
+        n_cls   : int — number of distinct classes.
         """
         tids = [e.tid for e in self.els]
         if not tids:
             self.ig = 0.0
             return
 
-        y        = np.array(ytrain)
-        y_in     = y[tids]
-        base     = (_entropy(y, n_cls) if parent is None
-                    else _entropy(y[[e.tid for e in parent.els]], n_cls))
-        n_parent = len(y) if parent is None else len(parent.els)
+        y_in     = y_arr[tids]
+        base     = (_entropy(y_arr, n_cls) if parent is None
+                    else _entropy(y_arr[[e.tid for e in parent.els]], n_cls))
+        n_parent = len(y_arr) if parent is None else len(parent.els)
         tid_set  = set(tids)
 
         if parent is None:
-            y_out = y[np.array([i for i in range(len(y)) if i not in tid_set])]
+            out_mask = np.ones(len(y_arr), dtype=bool)
+            out_mask[tids] = False
+            y_out = y_arr[out_mask]
         else:
             ptids    = [e.tid for e in parent.els]
             out_tids = [t for t in ptids if t not in tid_set]
-            y_out    = (y[np.array(out_tids, dtype=int)]
+            y_out    = (y_arr[np.array(out_tids, dtype=int)]
                         if out_tids else np.array([], dtype=int))
 
         if n_parent == 0:
@@ -728,7 +755,7 @@ class _UL:
 
         ce = (len(y_in)  / n_parent * _entropy(y_in,  n_cls) +
               len(y_out) / n_parent * _entropy(y_out, n_cls))
-        self.ig = round(max(base - ce, 0.0), 6)
+        self.ig = float(max(base - ce, 0.0))
 
 
 # =============================================================================
@@ -775,25 +802,35 @@ class _THUIsl:
             heapq.heapreplace(self.heap, (u, list(items), ul))
             self.minU = self.heap[0][0]
 
-    def _child(self, p: _UL, x: _UL) -> _UL:
+    def _child(self, p: '_UL', x: '_UL') -> '_UL':
         """
         Build the child utility list for the itemset (prefix ∪ {x.item}).
 
-        Uses a sorted-merge intersection of the parent utility list p and the
-        extension item's utility list x, restricted to transactions where both
-        appear.
+        Uses numpy searchsorted on the pre-sealed tid arrays for a vectorised
+        sorted-merge intersection instead of a Python two-pointer loop.
+        Parallel arrays are reconstructed into els for compute_ig.
         """
         c = _UL(x.item)
-        i = j = 0
-        pe, xe = p.els, x.els
-        while i < len(pe) and j < len(xe):
-            if pe[i].tid == xe[j].tid:
-                c.add(_El(pe[i].tid, pe[i].iu + xe[j].iu, xe[j].ru))
-                i += 1; j += 1
-            elif pe[i].tid < xe[j].tid:
-                i += 1
-            else:
-                j += 1
+        if not p.els or not x.els:
+            return c
+        # Require sealed arrays (built by _seal or _seal_from_arrays)
+        if p._tid_arr is None:
+            p._seal()
+        if x._tid_arr is None:
+            x._seal()
+        # Find positions in p_tids where x_tids match via sorted-array lookup
+        pos       = np.searchsorted(p._tid_arr, x._tid_arr)
+        pos_clip  = np.clip(pos, 0, len(p._tid_arr) - 1)
+        match     = p._tid_arr[pos_clip] == x._tid_arr
+        if not match.any():
+            return c
+        xi   = np.where(match)[0]
+        pi   = pos_clip[xi]
+        c._seal_from_arrays(
+            x._tid_arr[xi],
+            p._iu_arr[pi] + x._iu_arr[xi],
+            x._ru_arr[xi],
+        )
         return c
 
     def mine(self, transactions: list, item_twu: list,
@@ -804,13 +841,9 @@ class _THUIsl:
         Parameters
         ----------
         transactions : list of list of (item_id, utility)
-            One inner list per training row.
-        item_twu     : list of float
-            Transaction-Weighted Utility per item, 0-indexed (length = n_items).
-        ytrain       : list of int
-            Class label per training transaction.
-        n_cls        : int
-            Number of distinct classes.
+        item_twu     : list of float — Transaction-Weighted Utility per item
+        ytrain       : list of int   — class label per training transaction
+        n_cls        : int           — number of distinct classes
 
         Returns
         -------
@@ -821,6 +854,10 @@ class _THUIsl:
         n_items  = len(item_twu)
         use_eucs = (self.L != 1)
 
+        # Pre-convert ytrain to numpy array once so compute_ig does not
+        # call np.array(ytrain) on every invocation (4000+ times per fit).
+        y_arr = np.asarray(ytrain, dtype=np.int64)
+
         ul_map = {iid: _UL(iid) for iid in range(1, n_items + 1)
                   if item_twu[iid - 1] >= self.minU}
         sorted_items = sorted(ul_map, key=lambda x: item_twu[x - 1])
@@ -829,7 +866,7 @@ class _THUIsl:
         for tid, trans in enumerate(transactions):
             if len(trans) == 1 and trans[0][0] == -1:
                 continue
-            active  = [(it, u) for it, u in trans if it in ul_map]
+            active = [(it, u) for it, u in trans if it in ul_map]
             if not active:
                 continue
             new_twu = sum(u for _, u in active)
@@ -847,21 +884,25 @@ class _THUIsl:
                             fm[oj][1] += u + ou
                 rem += u
 
-        # Compute IG for all 1-itemsets before search tree traversal
+        # Seal all 1-item utility lists to build numpy arrays for fast _child()
         for ul in ul_map.values():
-            ul.compute_ig(None, ytrain, n_cls)
+            ul._seal()
+
+        # Compute IG for all 1-itemsets using pre-built y_arr
+        for ul in ul_map.values():
+            ul.compute_ig(None, y_arr, n_cls)
 
         uls = [ul_map[i] for i in sorted_items if i in ul_map]
-        self._explore([], uls, ytrain, n_cls, 0, fmap)
+        self._explore([], uls, y_arr, n_cls, 0, fmap)
         return self.heap
 
-    def _explore(self, prefix, uls, ytrain, n_cls, depth, fmap):
+    def _explore(self, prefix, uls, y_arr, n_cls, depth, fmap):
         """
         Depth-first search of the itemset lattice.
 
-        Applies LIU pruning (sI + sR < minU), EUCS pruning for extensions when
-        L > 1, and the IG threshold G.  Recursion depth is capped at L (or 99
-        when L is -1, meaning unlimited).
+        Applies LIU pruning (sI + sR < minU), EUCS pruning for extensions
+        when L > 1, and the IG threshold G.  Recursion is capped at depth L
+        (or 99 when L is -1, meaning unlimited).
         """
         maxd = self.L if self.L not in (-1, 0) else 99
         for i, ux in enumerate(uls):
@@ -878,10 +919,11 @@ class _THUIsl:
                     continue
                 ch = self._child(ux, uy)
                 if ch.sI + ch.sR >= self.minU:
-                    ch.compute_ig(ux, ytrain, n_cls)
+                    ch.compute_ig(ux, y_arr, n_cls)
                     ext.append(ch)
             if ext:
-                self._explore(prefix + [ux.item], ext, ytrain, n_cls, depth + 1, fmap)
+                self._explore(prefix + [ux.item], ext, y_arr, n_cls,
+                               depth + 1, fmap)
 
 
 # =============================================================================
@@ -892,8 +934,9 @@ def _build_matrix(transactions: list, patterns: list, n: int) -> csr_matrix:
     """
     Build a sparse binary pattern-presence matrix of shape (n, len(patterns)).
 
-    Entry (i, j) is 1 if all items of pattern j are present in transaction i,
-    and 0 otherwise.  The matrix is stored in CSR format with float32 values.
+    Entry (i, j) is 1 if all items of pattern j are present in transaction i.
+    Transaction item-sets are precomputed as frozensets once and reused for
+    all pattern membership tests, avoiding redundant set construction.
 
     Parameters
     ----------
@@ -905,11 +948,13 @@ def _build_matrix(transactions: list, patterns: list, n: int) -> csr_matrix:
     -------
     csr_matrix, shape (n, len(patterns)), dtype float32
     """
+    # Precompute frozensets once — reused across all len(patterns) checks
+    trans_sets = [frozenset(t[0] for t in tr if t[0] != -1) for tr in transactions]
     rows, cols = [], []
     for pi, (_, items, _ul) in enumerate(patterns):
-        iset = set(items)
-        for tid, trans in enumerate(transactions):
-            if iset.issubset(t[0] for t in trans):
+        iset = frozenset(items)
+        for tid, ts in enumerate(trans_sets):
+            if iset.issubset(ts):
                 rows.append(tid)
                 cols.append(pi)
     data = np.ones(len(rows), dtype=np.float32)
