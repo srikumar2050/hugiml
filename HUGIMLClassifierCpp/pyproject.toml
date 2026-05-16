@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61", "pybind11>=2.10"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hugiml-native"
+version = "1.0.0"
+description = "HUG-IML Classifier — C++ accelerated, scikit-learn compatible"
+readme = "README.md"
+license = { text = "GPL-3.0" }
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "scikit-learn>=1.0",
+    "pandas>=1.4",
+    "pybind11>=2.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "build", "cibuildwheel"]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-*"
+archs  = ["auto"]
+
+[tool.cibuildwheel.linux]
+before-build = "pip install pybind11"
+
+[tool.cibuildwheel.macos]
+before-build = "pip install pybind11"
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }

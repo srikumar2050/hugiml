@@ -320,3 +320,148 @@ print(clf.get_pattern_info())   # utility / information gain / support per patte
 - Parameters `dsName`, `foldNo`, `imbWeights`, `huiItemsPercent`, and `fsK` are available only in the Java-backed `HUGIMLClassifier` and have no equivalent here.
 - For datasets with more than ~50000 training rows and `L ≥ 2`, the Java-backed `HUGIMLClassifier` is recommended for performance.
 
+<br/>
+
+### 5. C++ ACCELERATED BACKEND (HUGIMLClassifierNative)
+
+`HUGIMLClassifierNative` is a high-performance implementation of the HUG-IML classifier backed by a compiled C++ extension (`_hugiml_core`) built with [pybind11](https://pybind11.readthedocs.io). It delivers the same sklearn-compatible public API and produces numerically identical results while achieving substantially faster fit and prediction times, especially on large datasets.
+
+The source files are located in the `HUGIMLClassifierCpp/` folder of this repository.
+
+#### 5.1 What runs in C++
+
+All computationally intensive stages execute inside the compiled extension:
+
+- **Discretisation** — quantile binning (`_kbins`), supervised bin-count selection (`_choose_nb`), normalised entropy, information gain, NMI, and Pearson correlation
+- **Transaction construction** — three-pass pipeline that discretises columns, assigns utility weights, and builds the utility-annotated transaction list
+- **Top-K HUI mining** — utility-list construction, EUCS and LIU pruning, information-gain filtering, bounded min-heap management
+- **Binary feature-matrix assembly** — training matrix and test-time transform
+
+Column-type detection, NaN imputation, the downstream sklearn estimator, and all explanation methods remain in Python.
+
+#### 5.2 Prerequisites
+
+A C++17-capable compiler is required:
+
+| Platform | Recommended toolchain |
+|---|---|
+| Linux | GCC ≥ 7 (`apt install g++`) |
+| macOS | Xcode Command Line Tools (`xcode-select --install`) |
+| Windows | Visual Studio Build Tools 2017 or later |
+
+Python ≥ 3.9 and the following packages are also needed:
+
+```
+numpy>=1.22  pandas>=1.4  scipy>=1.8  scikit-learn>=1.0  pybind11>=2.10
+```
+
+#### 5.3 Installation
+
+From inside the `HUGIMLClassifierCpp/` folder, run:
+
+```
+pip install -e .
+```
+
+This compiles `_hugiml_core` (produces `_hugiml_core.so` on Linux/macOS or `_hugiml_core.pyd` on Windows) and makes both `_hugiml_core` and `HUGIMLClassifierNative` importable from anywhere in your Python environment.
+
+#### 5.4 Command-line usage
+
+Run the sample script from inside the `HUGIMLClassifierCpp/` folder:
+
+```
+python HUGIMLClassifierNativeSample.py
+```
+
+The sample script runs two benchmark datasets (Pima Indians Diabetes and Titanic) under multiple parameter configurations and prints classification metrics, pattern tables, and cross-validation scores.
+
+#### 5.5 Parameters
+
+The parameter set is identical to `HUGIMLClassifierPy`.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `B` | int | `5` | Quantile bins per numerical column. Use `-1` for supervised auto-selection (maximises per-column information gain over [2, 20]). |
+| `L` | int | `1` | Maximum pattern length. `1` = singletons; `2` = singletons and pairs; `-1` = unlimited. |
+| `G` | float | `1e-4` | Minimum information-gain threshold. Patterns below this are discarded. |
+| `topK` | int | `-1` | Maximum patterns to retain. `-1` auto-computes as C(100, L). |
+| `allCols` | list | `None` | `[int_cols, float_cols, cat_cols]` — column names grouped by type. Pair with `origColumns`. |
+| `origColumns` | list | `None` | Ordered list of all column names matching the columns of X. Pair with `allCols`. |
+| `base_estimator` | estimator | `None` | Downstream sklearn classifier. Defaults to `LogisticRegression`. |
+| `verbose` | bool | `False` | Print progress during fit. |
+
+#### 5.6 Quick start
+
+**Path A — `prepareXy`** (recommended when the full dataset is available upfront):
+
+```python
+from HUGIMLClassifierNative import HUGIMLClassifierNative
+from sklearn.model_selection import train_test_split
+
+clf = HUGIMLClassifierNative(B=7, L=1, G=5e-3)
+X, y = clf.prepareXy(X_df, y_series)          # auto-detects column types
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, stratify=y)
+clf.fit(X_tr, y_tr)
+
+y_pred_proba = clf.predict_proba(X_te)
+y_pred       = y_pred_proba.argmax(axis=1)
+
+print(clf.get_hug_features())   # e.g. ['glucose=[107,140]', 'bmi=[0.275,0.383]']
+print(clf.get_pattern_info())   # utility / information gain / support per pattern
+```
+
+**Path B — `allCols + origColumns`** (use inside cross-validation loops):
+
+```python
+import numpy as np
+from HUGIMLClassifierNative import HUGIMLClassifierNative
+from sklearn.model_selection import StratifiedKFold, cross_validate
+
+numericIntCols   = [c for c in X.columns if np.issubdtype(X[c].dtype, np.integer)]
+numericFloatCols = [c for c in X.columns if np.issubdtype(X[c].dtype, float)]
+catCols          = [c for c in X.columns if X[c].dtype == object]
+
+clf = HUGIMLClassifierNative(
+    B=-1, L=1, G=1e-6,
+    allCols=[numericIntCols, numericFloatCols, catCols],
+    origColumns=X.columns.tolist(),
+)
+
+cv = cross_validate(
+    clf, X, y,
+    cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=0),
+    scoring=['accuracy', 'f1', 'roc_auc'],
+)
+```
+
+#### 5.7 Output methods
+
+| Method | Returns | Description |
+|---|---|---|
+| `get_hug_features()` | `list[str]` | Human-readable label per mined pattern, e.g. `'glucose=[107,140]'` or `'sex=male'`. |
+| `get_pattern_info()` | `pd.DataFrame` | One row per pattern with columns `pattern`, `utility`, `information_gain`, `support`. |
+| `transform(X)` | `csr_matrix (n, n_patterns)` | Binary pattern-presence matrix without running prediction. Plug into a custom downstream model. |
+
+#### 5.8 Repository files
+
+```
+HUGIMLClassifierCpp/
+├── setup.py                        Build configuration
+├── pyproject.toml                  PEP 517/518 build metadata
+├── requirements.txt                Python dependencies
+├── HUGIMLClassifierNative.py       sklearn-compatible Python wrapper
+├── HUGIMLClassifierNativeSample.py Sample script (Pima + Titanic benchmarks)
+├── datasets/
+│   ├── pima indians diabetes.csv   Pima Indians Diabetes dataset
+│   └── titanic.csv                 Titanic dataset
+└── src/
+    └── hugiml_core.cpp             C++ extension source (~1 100 lines)
+```
+
+#### 5.9 Notes
+
+- `HUGIMLClassifierNative` does not create or use the `outputs/` directory.
+- Parameters `dsName`, `foldNo`, `imbWeights`, `huiItemsPercent`, and `fsK` are specific to the Java-backed `HUGIMLClassifier` and have no equivalent here.
+- The C++ implementation reproduces the Python version's results to floating-point precision. Prediction probabilities are numerically identical across all tested datasets and parameter combinations.
+
+<br/>
