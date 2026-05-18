@@ -278,6 +278,159 @@ class HUGIMLClassifierNative(ClassifierMixin, BaseEstimator):
 
         return X_num, X_cat_raw
 
+    def _build_bn2id(self):
+        """
+        Build bin-to-item mapping.
+        
+        Constructs a dictionary mapping composite bin keys to item IDs, where
+        each key is computed as (col_idx * 10000 + bin_idx). This encoding
+        ensures unique keys across all features while preserving column and
+        bin ordering information.
+        
+        Returns
+        -------
+        dict
+            Mapping from integer bin keys to item IDs from td_.item_map.
+        """
+        bn2id = {}
+        item_map = self.td_.item_map
+        
+        # Group items by feature
+        feature_items = {}
+        for item_id, label in item_map.items():
+            if '=' in label:
+                feat_name = label.split('=')[0]
+                if feat_name not in feature_items:
+                    feature_items[feat_name] = []
+                feature_items[feat_name].append(item_id)
+        
+        # Get feature ordering
+        feature_names = (self.feature_names_in_ if hasattr(self, 'feature_names_in_') 
+                        else self.origColumns)
+        
+        # Assign bin keys
+        for col_idx, feat_name in enumerate(feature_names):
+            if feat_name in feature_items:
+                items_sorted = sorted(feature_items[feat_name])
+                for bin_idx, item_id in enumerate(items_sorted):
+                    bin_key = (col_idx * 10000) + bin_idx
+                    bn2id[bin_key] = item_id
+        
+        return bn2id
+
+    def _build_all_edges(self):
+        """
+        Extract discretisation bin edges from item labels for all features.
+        
+        Parses the td_.item_map to recover the bin boundaries used during
+        discretisation. For numerical features, edges are extracted from
+        interval labels (e.g., 'age=[25,35]'). For categorical features,
+        None is returned as they have no continuous edges.
+        
+        Returns
+        -------
+        list
+            One entry per feature. For numerical features: np.ndarray of
+            sorted bin edges. For categorical features: None.
+        """
+        import re as re_module
+        feature_names = (self.feature_names_in_ if hasattr(self, 'feature_names_in_')
+                        else self.origColumns)
+        all_edges = []
+        
+        for col_idx, feat_name in enumerate(feature_names):
+            if self.cat_cols_mask_[col_idx]:
+                all_edges.append(None)
+            else:
+                edges = set()
+                for item_id, label in self.td_.item_map.items():
+                    if label.startswith(feat_name + '='):
+                        match = re_module.search(r'\[([0-9.+-]+),([0-9.+-]+)\]', label)
+                        if match:
+                            low, high = float(match.group(1)), float(match.group(2))
+                            edges.add(low)
+                            edges.add(high)
+                
+                if edges:
+                    all_edges.append(np.array(sorted(edges)))
+                else:
+                    all_edges.append(np.array([0.0, 1.0]))
+        
+        return all_edges
+
+    def _build_col_range_min(self, all_edges):
+        """
+        Compute feature scaling parameters from discretisation edges.
+        
+        For float features, extracts the minimum value and range (max - min)
+        from the bin edges used during discretisation. Integer and categorical
+        features receive default values (min=0.0, range=1.0) as they are not
+        scaled during preprocessing.
+        
+        Parameters
+        ----------
+        all_edges : list
+            Bin edges per feature, as returned by _build_all_edges().
+        
+        Returns
+        -------
+        tuple of np.ndarray
+            (col_range, col_min) where each is a 1D array with one entry
+            per feature. col_range[i] is the range of feature i, and
+            col_min[i] is its minimum value in the original scale.
+        """
+        feature_names = (self.feature_names_in_ if hasattr(self, 'feature_names_in_')
+                        else self.origColumns)
+        col_range = []
+        col_min = []
+        
+        for col_idx in range(len(feature_names)):
+            if self.cat_cols_mask_[col_idx] or self.is_int_mask_[col_idx]:
+                col_range.append(1.0)
+                col_min.append(0.0)
+            else:
+                edges = all_edges[col_idx]
+                if edges is not None and len(edges) > 0:
+                    min_val = float(edges[0])
+                    max_val = float(edges[-1])
+                    col_range.append(max_val - min_val if max_val > min_val else 1.0)
+                    col_min.append(min_val)
+                else:
+                    col_range.append(1.0)
+                    col_min.append(0.0)
+        
+        return np.array(col_range), np.array(col_min)
+
+    def _add_compat_attributes(self):
+        """
+        Augment td_ with derived attributes for downstream interfaces.
+        
+        Derived attributes added:
+            bn2id     : Bin-to-item mapping for pattern lookup
+            all_edges : Discretisation boundaries per feature
+            col_range : Feature value ranges (for descaling)
+            col_min   : Feature minimum values (for descaling)
+            is_cat    : Categorical feature mask
+            is_int    : Integer feature mask
+        """
+        class TransactionDataWrapper:
+            def __init__(self, td_native, classifier):
+                self._td = td_native
+                self._clf = classifier
+                # Pre-compute additional attributes
+                self.bn2id = self._clf._build_bn2id()
+                self.all_edges = self._clf._build_all_edges()
+                self.col_range, self.col_min = self._clf._build_col_range_min(self.all_edges)
+                self.is_cat = self._clf.cat_cols_mask_
+                self.is_int = self._clf.is_int_mask_
+            
+            def __getattr__(self, name):
+                # Delegate to native td_ for all other attributes
+                return getattr(self._td, name)
+        
+        # Replace td_ with wrapped version
+        self.td_ = TransactionDataWrapper(self.td_, self)
+
     def _effective_topK(self):
         if self.topK != -1:
             return self.topK
@@ -441,6 +594,9 @@ class HUGIMLClassifierNative(ClassifierMixin, BaseEstimator):
         self.model_ = Pipeline([('clf', self._make_estimator(n_cls))])
         self.model_.fit(self.x_train_hup_, y_train)
 
+        
+        # ── Add compatibility attributes ───────────────────────────────────
+        self._add_compat_attributes()
         return self
 
     def predict_proba(self, X_test):
